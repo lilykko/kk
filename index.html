@@ -15,5 +15,56 @@
 <dl><div><dt>当前环境</dt><dd id="env-name">平整地面</dd></div><div><dt>适应模式</dt><dd id="adapt-mode">标准模式</dd></div><div><dt>当前位置</dt><dd id="pos">—</dd></div><div><dt>地面高度</dt><dd id="ground-height">—</dd></div><div><dt>局部坡度</dt><dd id="local-slope">—</dd></div><div><dt>最近障碍物距离</dt><dd id="nearest-obstacle">—</dd></div><div><dt>机身航向</dt><dd id="yaw">—</dd></div><div><dt>左 / 右轮累计转角</dt><dd id="wheels">—</dd></div><div><dt>左 / 右膝角</dt><dd id="knees">—</dd></div><div><dt>机身侧倾</dt><dd id="bank">—</dd></div><div><dt>地面状态</dt><dd id="contact">—</dd></div></dl>
 <p class="note">网页用关节运动学保持双轮贴地。目标在身后时，模型会倒车入弯。</p></section>
 </aside></div>
-<footer><button id="play" disabled>播放</button><label class="sr" for="time">播放进度</label><input type="range" id="time" min="0" max="1" step="0.001" value="0" disabled><output id="clock">0.00 / 0.00 s</output><span class="timeline">04 / TIMELINE</span></footer>
+<footer><button id="play" disabled>播放</button><label class="sr" for="time">播放进度</label><div class="timeline-wrap"><input type="range" id="time" min="0" max="1" step="0.001" value="0" disabled><div id="timeline-markers" aria-label="时间轴问题标记"></div></div><output id="clock">0.00 / 0.00 s</output><span class="timeline">04 / TIMELINE</span></footer>
+<section class="panel critic-section" id="critic-section" aria-label="AI Motion Critic 运动真实性评估">
+<div class="critic-head">
+  <div>
+    <div class="eyebrow">05 / AI MOTION CRITIC</div>
+    <h2>AI Motion Critic · 运动真实性与物理一致性评估</h2>
+  </div>
+  <div class="critic-actions">
+    <label class="live-toggle"><input type="checkbox" id="live-monitor"><span>实时监测</span></label>
+    <span class="live-pill" id="live-status" hidden>实时监测待机</span>
+    <button type="button" id="clear-issue" hidden>清除标注</button>
+    <button type="button" class="primary critic-btn" id="analyze-motion" disabled>Analyze Current Motion · 分析当前运动</button>
+  </div>
+</div>
+<div class="critic-overview" id="critic-overview">
+  <div class="score-box">
+    <div class="score-val" id="critic-score">—</div>
+    <div class="score-meta">
+      <span class="status-tag" id="critic-status">等待分析运动序列</span>
+      <span class="critic-sub" id="critic-meta">请先生成一段轨迹并点击「Analyze Current Motion」</span>
+    </div>
+  </div>
+  <div class="overview-stats">
+    <div><span>当前环境</span><strong id="critic-env">—</strong></div>
+    <div><span>分析时长</span><strong id="critic-duration">—</strong></div>
+    <div><span>检测问题数</span><strong id="critic-issue-count">—</strong></div>
+    <div><span>物理验证引擎</span><strong>本地几何与运动学计算</strong></div>
+  </div>
+</div>
+<div class="critic-grid">
+  <div class="critic-col">
+    <h3>分项评分 (0–100)</h3>
+    <div class="cat-list" id="critic-categories">
+      <p class="critic-empty">尚未运行物理验证。</p>
+    </div>
+    <h3 class="mt-gap">检测到的问题 (点击定位时间轴与 3D 场景)</h3>
+    <div class="issue-list" id="critic-issues">
+      <p class="critic-empty">暂无检测报告。</p>
+    </div>
+  </div>
+  <div class="critic-col">
+    <div class="ai-head">
+      <h3>评估解释与改进建议</h3>
+      <span class="source-badge" id="critic-source">未生成</span>
+    </div>
+    <div class="ai-body" id="critic-ai">
+      <p class="critic-empty">点击「Analyze Current Motion」后，将结合本地计算指标生成问题解析、地形建议与模型不确定性说明。</p>
+    </div>
+  </div>
+</div>
+<p class="note critic-disclaimer">说明：评估分值为原型阶段运动学与几何近似指标，不代表经完整刚体动力学验证的科学物理结论。</p>
+</section>
 </main><script type="module" src="studio.js"></script></body></html>

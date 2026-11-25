@@ -4,6 +4,11 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 import { makeArc, makeEnvironmentMotion, makeRig } from './motion.js';
 import { ENVIRONMENTS, EnvironmentManager } from './environment.js';
+import {
+  evaluateMotionSequence,
+  inspectFrameState,
+  requestAiInterpretation,
+} from './critic.js';
 
 const $ = (id) => document.getElementById(id);
 const host = $('scene'), status = $('status');
@@ -14,10 +19,30 @@ const angle = (v) => Math.atan2(Math.sin(v),Math.cos(v));
 const deg = (v) => (v*180/Math.PI).toFixed(0)+'°';
 const position = (x,z) => '('+x.toFixed(2)+', '+z.toFixed(2)+') m';
 
+const SEVERITY_COLORS = {
+  Critical: 0xdc2626,
+  High: 0xea580c,
+  Moderate: 0xca8a04,
+  Low: 0x125ac5,
+};
+
+const CATEGORY_LABELS = [
+  ['groundContact', 'Ground Contact · 地面接触'],
+  ['collisionAvoidance', 'Collision Avoidance · 碰撞避让'],
+  ['jointValidity', 'Joint Validity · 关节合理性'],
+  ['motionContinuity', 'Motion Continuity · 运动连续性'],
+  ['balanceStability', 'Balance & Stability · 稳定度(近似)'],
+  ['terrainAdaptation', 'Terrain Adaptation · 地形适应'],
+];
+
 let scene,camera,renderer,controls,robot,posture,poseRig,marker,route;
 let basePlane,gridHelper,originRing,envManager,obstacleVisuals,waypointGroup;
+let issueVisualGroup, partHighlightMesh = null;
 let pose=zero(), motion=null, playing=false, elapsed=0, previous=0, frame=0;
 let switchingEnv = false;
+let currentReport = null, selectedIssueId = null, analyzing = false;
+let liveMonitorEnabled = false, lastLiveCheckAt = 0;
+
 const floor=new T.Plane(new T.Vector3(0,1,0),0);
 const ray=new T.Raycaster();
 const UP_VEC=new T.Vector3(0,1,0);
@@ -107,6 +132,7 @@ function rebuildObstacleVisuals(){
 function updateObstacleVisuals(robotX, robotZ){
   if (!obstacleVisuals) return;
   const avoided = new Set(motion?.avoidedNames || []);
+  const selectedIssue = currentReport?.issues?.find((it) => it.id === selectedIssueId) || null;
   for (const wire of obstacleVisuals.children) {
     const name = wire.userData.obstacleName;
     const obs = envManager?.obstacles.find((o) => o.name === name);
@@ -115,9 +141,13 @@ function updateObstacleVisuals(robotX, robotZ){
     const dz = Math.max(obs.minZ - robotZ, 0, robotZ - obs.maxZ);
     const dist = Math.hypot(dx, dz);
     const isAvoided = avoided.has(name);
+    const isIssueTarget = selectedIssue?.targetName === name;
     const isNear = dist < 0.48;
-    wire.visible = isAvoided || isNear;
-    if (isAvoided) {
+    wire.visible = isIssueTarget || isAvoided || isNear;
+    if (isIssueTarget) {
+      wire.material.color.setHex(SEVERITY_COLORS[selectedIssue.severity] ?? 0xdc2626);
+      wire.material.opacity = 1.0;
+    } else if (isAvoided) {
       wire.material.color.setHex(0xdc2626);
       wire.material.opacity = 0.9;
     } else if (isNear) {
@@ -134,6 +164,391 @@ function clearWaypoints(){
     waypointGroup.remove(c);
     if (c.geometry) c.geometry.dispose();
     if (c.material) c.material.dispose();
+  }
+}
+
+function clearPartHighlight(){
+  if (partHighlightMesh) {
+    if (partHighlightMesh.parent) partHighlightMesh.parent.remove(partHighlightMesh);
+    if (partHighlightMesh.geometry) partHighlightMesh.geometry.dispose();
+    if (partHighlightMesh.material) partHighlightMesh.material.dispose();
+    partHighlightMesh = null;
+  }
+}
+
+function clearIssueVisuals(){
+  selectedIssueId = null;
+  clearPartHighlight();
+  if (issueVisualGroup) {
+    while (issueVisualGroup.children.length) {
+      const c = issueVisualGroup.children[0];
+      issueVisualGroup.remove(c);
+      if (c.geometry) c.geometry.dispose();
+      if (c.material) c.material.dispose();
+    }
+    issueVisualGroup.visible = false;
+  }
+  if ($('clear-issue')) $('clear-issue').hidden = true;
+  for (const el of document.querySelectorAll('.issue-card.active, .t-marker.active')) {
+    el.classList.remove('active');
+  }
+}
+
+function highlightRobotBodyPart(bodyPart, colorHex){
+  clearPartHighlight();
+  if (!robot || !bodyPart) return;
+  let targetNode = null;
+  let boxSize = [0.16, 0.21, 0.21];
+  let offset = [0, 0.08, 0];
+
+  if (bodyPart === 'Left Wheel') {
+    targetNode = robot.getObjectByName('L_Wheel_spin');
+    boxSize = [0.05, 0.115, 0.115];
+    offset = [0, 0, 0];
+  } else if (bodyPart === 'Right Wheel') {
+    targetNode = robot.getObjectByName('R_Wheel_spin');
+    boxSize = [0.05, 0.115, 0.115];
+    offset = [0, 0, 0];
+  } else if (bodyPart === 'Left Leg') {
+    targetNode = robot.getObjectByName('L_Knee_pitch');
+    boxSize = [0.075, 0.14, 0.075];
+    offset = [0, -0.02, 0];
+  } else if (bodyPart === 'Right Leg') {
+    targetNode = robot.getObjectByName('R_Knee_pitch');
+    boxSize = [0.075, 0.14, 0.075];
+    offset = [0, -0.02, 0];
+  } else {
+    targetNode = posture;
+    boxSize = [0.17, 0.22, 0.22];
+    offset = [0, 0.08, 0];
+  }
+
+  if (!targetNode) return;
+  const geom = new T.BoxGeometry(boxSize[0], boxSize[1], boxSize[2]);
+  const edges = new T.EdgesGeometry(geom);
+  geom.dispose();
+  partHighlightMesh = new T.LineSegments(
+    edges,
+    new T.LineBasicMaterial({ color: colorHex, depthTest: false, transparent: true, opacity: 0.95 }),
+  );
+  partHighlightMesh.position.set(offset[0], offset[1], offset[2]);
+  partHighlightMesh.renderOrder = 20;
+  targetNode.add(partHighlightMesh);
+}
+
+function selectIssue(issue){
+  if (!issue) return;
+  clearIssueVisuals();
+  selectedIssueId = issue.id;
+  if ($('clear-issue')) $('clear-issue').hidden = false;
+
+  // Seek timeline to the issue peak timestamp
+  if (motion) {
+    stop();
+    elapsed = clamp(issue.peakTime, 0, motion.duration);
+    sample(elapsed);
+  }
+
+  const colorHex = SEVERITY_COLORS[issue.severity] ?? 0x125ac5;
+  highlightRobotBodyPart(issue.bodyPart, colorHex);
+
+  if (issueVisualGroup && issue.position) {
+    const ring = new T.Mesh(
+      new T.RingGeometry(0.055, 0.074, 32),
+      new T.MeshBasicMaterial({ color: colorHex, side: T.DoubleSide, depthWrite: false }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(issue.position.x, issue.position.y + 0.008, issue.position.z);
+
+    const stem = new T.Line(
+      new T.BufferGeometry().setFromPoints([
+        new T.Vector3(issue.position.x, issue.position.y + 0.008, issue.position.z),
+        new T.Vector3(issue.position.x, issue.position.y + 0.24, issue.position.z),
+      ]),
+      new T.LineBasicMaterial({ color: colorHex }),
+    );
+    const tip = new T.Mesh(
+      new T.SphereGeometry(0.018, 12, 10),
+      new T.MeshBasicMaterial({ color: colorHex }),
+    );
+    tip.position.set(issue.position.x, issue.position.y + 0.24, issue.position.z);
+
+    issueVisualGroup.add(ring, stem, tip);
+    issueVisualGroup.visible = true;
+  }
+
+  for (const el of document.querySelectorAll(`[data-issue-id="${issue.id}"]`)) {
+    el.classList.add('active');
+    if (el.classList.contains('issue-card')) {
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }
+  updateObstacleVisuals(pose.x, pose.z);
+  render();
+}
+
+function resetCriticPanel(){
+  currentReport = null;
+  clearIssueVisuals();
+  if ($('timeline-markers')) $('timeline-markers').innerHTML = '';
+  if ($('critic-score')) $('critic-score').textContent = '—';
+  if ($('critic-status')) {
+    $('critic-status').textContent = '等待分析运动序列';
+    $('critic-status').className = 'status-tag';
+  }
+  if ($('critic-meta')) $('critic-meta').textContent = '请先生成一段轨迹并点击「Analyze Current Motion」';
+  if ($('critic-env')) $('critic-env').textContent = envManager?.currentMeta ? `${envManager.currentMeta.en} · ${envManager.currentMeta.zh}` : '—';
+  if ($('critic-duration')) $('critic-duration').textContent = '—';
+  if ($('critic-issue-count')) $('critic-issue-count').textContent = '—';
+  if ($('critic-categories')) $('critic-categories').innerHTML = '<p class="critic-empty">尚未运行物理验证。</p>';
+  if ($('critic-issues')) $('critic-issues').innerHTML = '<p class="critic-empty">暂无检测报告。</p>';
+  if ($('critic-source')) {
+    $('critic-source').textContent = '未生成';
+    $('critic-source').className = 'source-badge';
+  }
+  if ($('critic-ai')) $('critic-ai').innerHTML = '<p class="critic-empty">点击「Analyze Current Motion」后，将结合本地计算指标生成问题解析、地形建议与模型不确定性说明。</p>';
+}
+
+function renderTimelineMarkers(report){
+  const hostEl = $('timeline-markers');
+  if (!hostEl) return;
+  hostEl.innerHTML = '';
+  if (!report || !report.issues.length || !report.stats.duration) return;
+  const dur = report.stats.duration;
+  for (const issue of report.issues) {
+    const pct = clamp((issue.peakTime / dur) * 100, 0, 100);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `t-marker sev-${issue.severity}`;
+    btn.dataset.issueId = issue.id;
+    btn.style.left = `${pct.toFixed(2)}%`;
+    btn.title = `[${issue.severity}] ${issue.title} (${issue.peakTime.toFixed(2)} s)`;
+    btn.setAttribute('aria-label', btn.title);
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectIssue(issue);
+    });
+    hostEl.appendChild(btn);
+  }
+}
+
+function renderCriticReport(report, aiResult){
+  $('critic-score').textContent = String(report.overallScore);
+  const tag = $('critic-status');
+  tag.textContent = `${report.status.en} · ${report.status.zh}`;
+  tag.className = `status-tag ${report.status.key}`;
+
+  $('critic-meta').textContent = report.hasCritical
+    ? '检测到严重物理违规（总分已受上限约束），请点击下方问题定位检查。'
+    : report.hasHigh
+      ? '存在高优先级物理偏差，建议依据下方改进建议调整。'
+      : '本地几何与运动学指标整体合理（原型近似评估）。';
+
+  $('critic-env').textContent = report.envLabel;
+  $('critic-duration').textContent = `${report.stats.duration.toFixed(2)} s (${report.stats.sampleCount} 帧)`;
+  $('critic-issue-count').textContent = `${report.issues.length} 项`;
+
+  const catHost = $('critic-categories');
+  catHost.innerHTML = '';
+  for (const [key, label] of CATEGORY_LABELS) {
+    const val = report.categories[key] ?? 0;
+    const item = document.createElement('div');
+    item.className = 'cat-item';
+    const row = document.createElement('div');
+    row.className = 'cat-row';
+    const nameEl = document.createElement('span');
+    nameEl.textContent = label;
+    const valEl = document.createElement('strong');
+    valEl.textContent = `${val}/100`;
+    row.append(nameEl, valEl);
+
+    const bar = document.createElement('div');
+    bar.className = 'cat-bar';
+    const fill = document.createElement('div');
+    fill.className = 'cat-fill' + (val < 55 ? ' low' : val < 80 ? ' mid' : '');
+    fill.style.width = `${val}%`;
+    bar.appendChild(fill);
+
+    item.append(row, bar);
+    catHost.appendChild(item);
+  }
+
+  const issueHost = $('critic-issues');
+  issueHost.innerHTML = '';
+  if (report.issues.length === 0) {
+    const ok = document.createElement('p');
+    ok.className = 'critic-empty';
+    ok.textContent = '未检测到地面穿透、悬空、障碍碰撞或显著连续性异常。';
+    issueHost.appendChild(ok);
+  } else {
+    for (const issue of report.issues) {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'issue-card';
+      card.dataset.issueId = issue.id;
+
+      const top = document.createElement('div');
+      top.className = 'issue-top';
+      const titleEl = document.createElement('span');
+      titleEl.className = 'issue-title';
+      titleEl.textContent = issue.title;
+      const sevEl = document.createElement('span');
+      sevEl.className = `sev-pill sev-${issue.severity}`;
+      sevEl.textContent = issue.severity;
+      top.append(titleEl, sevEl);
+
+      const metaEl = document.createElement('div');
+      metaEl.className = 'issue-meta';
+      const timeRange = Math.abs(issue.endTime - issue.time) > 0.05
+        ? `${issue.time.toFixed(2)}–${issue.endTime.toFixed(2)} s`
+        : `${issue.peakTime.toFixed(2)} s`;
+      metaEl.textContent = `时间: ${timeRange} · 部位: ${issue.bodyPart}${issue.targetName ? ` · 对象: ${issue.targetName}` : ''}`;
+
+      const descEl = document.createElement('div');
+      descEl.className = 'issue-desc';
+      descEl.textContent = issue.explanation;
+
+      const fixEl = document.createElement('div');
+      fixEl.className = 'issue-fix';
+      fixEl.textContent = `建议: ${issue.recommendation}`;
+
+      card.append(top, metaEl, descEl, fixEl);
+      card.addEventListener('click', () => selectIssue(issue));
+      issueHost.appendChild(card);
+    }
+  }
+
+  renderTimelineMarkers(report);
+
+  const srcBadge = $('critic-source');
+  const aiHost = $('critic-ai');
+  if (!aiResult) {
+    srcBadge.textContent = '解析生成中…';
+    srcBadge.className = 'source-badge';
+    aiHost.innerHTML = '<p class="critic-empty">正在基于本地验证指标生成解释与建议…</p>';
+    return;
+  }
+
+  srcBadge.textContent = aiResult.sourceLabel;
+  srcBadge.className = aiResult.source === 'ai-model' ? 'source-badge ai' : 'source-badge';
+  aiHost.innerHTML = '';
+
+  const addBlock = (title, content, isList = false) => {
+    const blk = document.createElement('div');
+    blk.className = 'ai-block';
+    const h = document.createElement('h4');
+    h.textContent = title;
+    blk.appendChild(h);
+    if (isList) {
+      const ul = document.createElement('ul');
+      for (const line of content) {
+        const li = document.createElement('li');
+        li.textContent = line;
+        ul.appendChild(li);
+      }
+      blk.appendChild(ul);
+    } else {
+      const p = document.createElement('p');
+      p.textContent = content;
+      blk.appendChild(p);
+    }
+    aiHost.appendChild(blk);
+  };
+
+  addBlock('总体运动评估 / Summary', aiResult.summary);
+  addBlock('地形适应分析 / Terrain Behavior', aiResult.terrainNotes);
+  addBlock('具体改进建议 / Recommendations', aiResult.recommendations, true);
+  addBlock('数据局限与不确定性 / Limitations', aiResult.uncertainties, true);
+}
+
+async function analyzeCurrentMotion(){
+  if (!motion || !robot || !posture || !poseRig || analyzing) return;
+  analyzing = true;
+  const btn = $('analyze-motion');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Analyzing Motion… · 正在分析运动…';
+  }
+  clearIssueVisuals();
+
+  try {
+    const meta = envManager?.currentMeta || ENVIRONMENTS[0];
+    const report = evaluateMotionSequence({
+      motion,
+      robot,
+      posture,
+      poseRig,
+      envManager,
+      envId: meta.id,
+      envMeta: meta,
+    });
+    if (!report) return;
+    currentReport = report;
+    renderCriticReport(report, null);
+
+    const aiResult = await requestAiInterpretation(report);
+    if (currentReport === report) {
+      renderCriticReport(report, aiResult);
+    }
+  } finally {
+    analyzing = false;
+    if (btn) {
+      btn.disabled = !motion;
+      btn.textContent = 'Analyze Current Motion · 分析当前运动';
+    }
+    render();
+  }
+}
+
+function runLiveCheck(p, time){
+  if (!liveMonitorEnabled || !robot || !posture) return;
+  const now = performance.now();
+  if (now - lastLiveCheckAt < 160) return;
+  lastLiveCheckAt = now;
+
+  const envId = envManager?.currentMeta?.id || 'flat-ground';
+  const joints = {
+    rollL: robot.getObjectByName('L_Hip_roll'),
+    hipL: robot.getObjectByName('L_Hip_pitch'),
+    kneeL: robot.getObjectByName('L_Knee_pitch'),
+    wheelL: robot.getObjectByName('L_Wheel_spin'),
+    rollR: robot.getObjectByName('R_Hip_roll'),
+    hipR: robot.getObjectByName('R_Hip_pitch'),
+    kneeR: robot.getObjectByName('R_Knee_pitch'),
+    wheelR: robot.getObjectByName('R_Wheel_spin'),
+  };
+  const snap = inspectFrameState({
+    pose: p,
+    time,
+    robot,
+    posture,
+    joints,
+    envManager,
+    envId,
+  });
+
+  const pill = $('live-status');
+  if (!pill) return;
+  const expectedSink = envId === 'sandy-beach' ? 0.007 : 0;
+  const pen = Math.max(-(snap.clearanceL + expectedSink), -(snap.clearanceR + expectedSink));
+  const stepAllowance = (p.stepActivity || 0) * 0.05;
+  const gap = Math.max(snap.clearanceL - stepAllowance, snap.clearanceR - stepAllowance);
+
+  if (snap.collisions.length > 0) {
+    pill.textContent = `实时监测: ${snap.collisions[0].obstacleName} 碰撞风险`;
+    pill.className = 'live-pill warn';
+  } else if (pen > 0.015) {
+    pill.textContent = `实时监测: 轮面穿模 ${(pen * 100).toFixed(1)} cm`;
+    pill.className = 'live-pill warn';
+  } else if (gap > 0.025) {
+    pill.textContent = `实时监测: 轮面悬空 ${(gap * 100).toFixed(1)} cm`;
+    pill.className = 'live-pill warn';
+  } else if (!snap.groundC.walkable) {
+    pill.textContent = `实时监测: 陡坡 ${snap.groundC.slopeDeg.toFixed(0)}°`;
+    pill.className = 'live-pill warn';
+  } else {
+    pill.textContent = `实时监测: 正常 (${snap.groundC.slopeDeg.toFixed(1)}°)`;
+    pill.className = 'live-pill';
   }
 }
 
@@ -234,6 +649,7 @@ function update(p,time,length,label){
   $('clock').textContent=time.toFixed(2)+' / '+length.toFixed(2)+' s';
   if(status.textContent!==label) status.textContent=label;
   $('play').textContent=playing?'暂停':(length && time>=length?'重播':'播放');
+  if (playing) runLiveCheck(p, time);
   render();
 }
 function sample(t){
@@ -281,6 +697,9 @@ function plan(x,z){
   next.avoidedNames = planned.avoidedNames;
   stop();
   motion = next;
+  resetCriticPanel();
+  if ($('analyze-motion')) $('analyze-motion').disabled = false;
+
   const includeSteppable = envId === 'urban-sidewalk' || envId === 'obstacle-park';
   const targetSample = envManager ? envManager.sampleTerrain(tx, tz, { includeSteppable }) : { height: 0, normal: { x: 0, y: 1, z: 0 } };
   marker.visible = route.visible = true;
@@ -319,6 +738,8 @@ function reset(){
   stop();motion=null;elapsed=0;
   route.visible=marker.visible=false;
   clearWaypoints();
+  resetCriticPanel();
+  if ($('analyze-motion')) $('analyze-motion').disabled = true;
   $('time').disabled=$('play').disabled=true;
   $('x').value='0.45';$('z').value='0.65';
   update(zero(),0,0,'已就绪');
@@ -357,7 +778,9 @@ function init(){
   route.frustumCulled=false;route.visible=marker.visible=false;
   obstacleVisuals = new T.Group();
   waypointGroup = new T.Group();
-  scene.add(route,marker,obstacleVisuals,waypointGroup);
+  issueVisualGroup = new T.Group();
+  issueVisualGroup.visible = false;
+  scene.add(route,marker,obstacleVisuals,waypointGroup,issueVisualGroup);
   envManager = new EnvironmentManager(scene);
   buildEnvironmentSelector();
   new ResizeObserver(resize).observe(host);
@@ -424,3 +847,14 @@ $('reset').addEventListener('click',reset);
 $('view').addEventListener('click',()=>{if(controls)setView();});
 $('play').addEventListener('click',()=>{if(playing){stop();sample(elapsed);}else play();});
 $('time').addEventListener('input',()=>{if(!motion)return;const v=Number($('time').value);stop();elapsed=v*motion.duration;sample(elapsed);});
+$('analyze-motion')?.addEventListener('click', analyzeCurrentMotion);
+$('clear-issue')?.addEventListener('click', () => { clearIssueVisuals(); updateObstacleVisuals(pose.x, pose.z); render(); });
+$('live-monitor')?.addEventListener('change', (e) => {
+  liveMonitorEnabled = !!e.target.checked;
+  const pill = $('live-status');
+  if (pill) {
+    pill.hidden = !liveMonitorEnabled;
+    pill.textContent = '实时监测待机';
+    pill.className = 'live-pill';
+  }
+});

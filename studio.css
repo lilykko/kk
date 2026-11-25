@@ -12,4 +12,72 @@
 .mode-chip{color:#125ac5}
 .slope-chip svg{width:18px;height:12px;display:block}
 @media(max-width:560px){.mode-chip{display:none}}
+.timeline-wrap{position:relative;flex:1;min-width:0;display:flex;align-items:center}
+.timeline-wrap input{width:100%;position:relative;z-index:1;margin:0}
+#timeline-markers{position:absolute;left:7px;right:7px;top:50%;height:18px;transform:translateY(-50%);pointer-events:none;z-index:2}
+.t-marker{position:absolute;top:0;width:8px;height:18px;padding:0;margin-left:-4px;border:1px solid #fff;border-radius:2px;pointer-events:auto;cursor:pointer;opacity:.92}
+.t-marker:hover,.t-marker.active{transform:scaleY(1.25);opacity:1;outline:2px solid #152431}
+.t-marker.sev-Critical{background:#dc2626}
+.t-marker.sev-High{background:#ea580c}
+.t-marker.sev-Moderate{background:#ca8a04}
+.t-marker.sev-Low{background:#125ac5}
+.critic-section{margin-top:14px}
+.critic-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);padding-bottom:12px}
+.critic-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.critic-btn{width:auto;margin-top:0;padding:7px 14px}
+.live-toggle{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#4b5e6b;background:#fff;border:1px solid var(--line);padding:5px 9px;cursor:pointer}
+.live-pill{font:600 11px/1.3 Consolas,"Microsoft YaHei",monospace;padding:5px 8px;border:1px solid var(--line);background:#fff;color:#145691}
+.live-pill.warn{border-color:#ea580c;color:#c2410c;background:#fff7ed}
+.critic-overview{display:grid;grid-template-columns:minmax(240px,1fr) minmax(0,1.5fr);gap:12px;margin:12px 0}
+.score-box{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid var(--line);padding:10px 12px}
+.score-val{font:700 28px/1 Consolas,"Microsoft YaHei",monospace;min-width:56px;text-align:center;color:#125ac5}
+.score-meta{display:flex;flex-direction:column;gap:4px;min-width:0}
+.status-tag{display:inline-block;width:fit-content;font:600 12px/1.2 Consolas,"Microsoft YaHei",monospace;padding:3px 7px;border:1px solid var(--line);background:#eef3f7;color:#152431}
+.status-tag.highly_plausible{background:#ecfdf5;border-color:#86efac;color:#166534}
+.status-tag.mostly_plausible{background:#eff6ff;border-color:#93c5fd;color:#1e40af}
+.status-tag.needs_improvement{background:#fffbeb;border-color:#fcd34d;color:#92400e}
+.status-tag.physically_inconsistent{background:#fef2f2;border-color:#fca5a5;color:#991b1b}
+.critic-sub{font-size:12px;color:#536474}
+.overview-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.overview-stats>div{background:#fff;border:1px solid var(--line);padding:8px 10px;display:flex;flex-direction:column;gap:2px}
+.overview-stats span{font-size:11px;color:#536474}
+.overview-stats strong{font:600 12px/1.35 Consolas,"Microsoft YaHei",monospace;color:#152431;word-break:break-word}
+.critic-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:14px;margin-top:8px}
+.critic-col{background:#fff;border:1px solid var(--line);padding:12px 14px;display:flex;flex-direction:column}
+.critic-col h3{margin:0 0 8px;font-size:14px;color:#152431}
+.mt-gap{margin-top:14px !important}
+.cat-list{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.cat-item{border:1px solid #e0e6eb;padding:7px 9px;background:#f8fafb}
+.cat-row{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px}
+.cat-row strong{font-family:Consolas,"Microsoft YaHei",monospace;color:#145691}
+.cat-bar{height:5px;background:#e0e6eb;overflow:hidden}
+.cat-fill{height:100%;background:#125ac5}
+.cat-fill.mid{background:#ca8a04}
+.cat-fill.low{background:#dc2626}
+.issue-list{display:flex;flex-direction:column;gap:6px;max-height:290px;overflow:auto}
+.issue-card{width:100%;text-align:left;background:#f8fafb;border:1px solid var(--line);padding:8px 10px;display:flex;flex-direction:column;gap:4px}
+.issue-card:hover{border-color:var(--accent);background:#f2f6fb}
+.issue-card.active{border-color:var(--accent);background:#eaf1fb;box-shadow:inset 3px 0 0 var(--accent)}
+.issue-top{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.issue-title{font-size:13px;font-weight:600;color:#152431}
+.sev-pill{font:600 11px/1.2 Consolas,"Microsoft YaHei",monospace;padding:2px 6px;border-radius:2px;color:#fff}
+.sev-Critical{background:#dc2626}
+.sev-High{background:#ea580c}
+.sev-Moderate{background:#ca8a04}
+.sev-Low{background:#125ac5}
+.issue-meta{font:600 11px/1.3 Consolas,"Microsoft YaHei",monospace;color:#536474}
+.issue-desc{font-size:12px;color:#334554}
+.issue-fix{font-size:12px;color:#145691}
+.ai-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.ai-head h3{margin:0}
+.source-badge{font:600 11px/1.2 Consolas,"Microsoft YaHei",monospace;padding:3px 7px;border:1px solid var(--line);background:#f8fafb;color:#536474}
+.source-badge.ai{border-color:#93c5fd;background:#eff6ff;color:#1e40af}
+.ai-body{display:flex;flex-direction:column;gap:10px;font-size:13px;color:#243746}
+.ai-block h4{margin:0 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#536474}
+.ai-block p{margin:0;color:#243746;font-size:13px}
+.ai-block ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px}
+.critic-empty{font-size:12px;color:#536474;margin:4px 0}
+.critic-disclaimer{margin-top:10px;font-size:12px;color:#536474}
+@media(max-width:960px){.critic-overview,.critic-grid{grid-template-columns:1fr}.overview-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.cat-list{grid-template-columns:1fr}}
 
